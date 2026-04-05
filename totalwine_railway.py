@@ -19,6 +19,7 @@ Environment Variables:
     PUSHOVER_APP_TOKEN       - Pushover API token
     DISCORD_WEBHOOK_URL      - Discord webhook URL (optional)
     DISCORD_ROLE_ID          - Discord role ID to ping (optional)
+    PROXY                    - Residential proxy (format: host:port:user:pass)
     TIMEZONE                 - Timezone for timestamps (default: America/New_York)
 
 TW_PRODUCTS format (pipe-separated fields, semicolon between products):
@@ -52,6 +53,19 @@ PUSHOVER_USER_KEY = "uzmaqrmwawus7dk8smym64rzovrt5p"
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID", "")
 TIMEZONE = os.getenv("TIMEZONE", "America/New_York")
+
+# Proxy support - format: host:port:user:pass
+_proxy_raw = os.getenv("PROXY", "")
+PROXY_URL = None
+if _proxy_raw:
+    parts = _proxy_raw.split(":")
+    if len(parts) == 4:
+        host, port, user, password = parts
+        PROXY_URL = f"http://{user}:{password}@{host}:{port}"
+    elif _proxy_raw.startswith("http"):
+        PROXY_URL = _proxy_raw
+    else:
+        print(f"WARNING: Invalid PROXY format. Expected host:port:user:pass")
 
 BASE_URL = "https://www.totalwine.com"
 STATE_FILE = os.getenv("STATE_FILE", "/tmp/totalwine_stock_state.json")
@@ -188,7 +202,10 @@ def check_all_stores(products: list[dict], store_ids: list[str]) -> dict:
 
     Returns dict: product_name -> list of store results
     """
-    session = curl_requests.Session(impersonate="chrome")
+    proxy_kwargs = {}
+    if PROXY_URL:
+        proxy_kwargs["proxies"] = {"http": PROXY_URL, "https": PROXY_URL}
+    session = curl_requests.Session(impersonate="chrome", **proxy_kwargs)
 
     results = {}
 
@@ -384,6 +401,7 @@ def run_continuous(products: list[dict]) -> None:
     log(f"Check interval: {TW_CHECK_INTERVAL}s ({TW_CHECK_INTERVAL // 60}min)")
     log(f"Pushover: {'Yes' if PUSHOVER_APP_TOKEN else 'No'}")
     log(f"Discord: {'Yes' if DISCORD_WEBHOOK_URL else 'No'}")
+    log(f"Proxy: {'Yes' if PROXY_URL else 'No'}")
 
     for p in products:
         log(f"  - {p['name']}")
@@ -457,6 +475,7 @@ Environment Variables:
     PUSHOVER_APP_TOKEN       Pushover API token
     DISCORD_WEBHOOK_URL      Discord webhook URL (optional)
     DISCORD_ROLE_ID          Discord role ID to ping (optional)
+    PROXY                    Residential proxy (host:port:user:pass)
     TIMEZONE                 Timezone (default: America/New_York)
 """)
 
