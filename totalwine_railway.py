@@ -183,11 +183,16 @@ def check_stock(product: dict, store_id: str, session) -> dict:
 
         in_stock = pickup_status.lower() not in ("out of stock", "unavailable", "unknown")
 
+        # Extract quantity
+        qty_match = re.search(r'"stock":(\d+)', text)
+        quantity = int(qty_match.group(1)) if qty_match else 0
+
         return {
             "store_id": store_id,
             "store_name": store_name,
             "in_stock": in_stock,
             "stock_message": pickup_status,
+            "quantity": quantity,
             "all_methods": {method: msg for method, msg in stock_msgs},
         }
 
@@ -218,8 +223,9 @@ def check_all_stores(products: list[dict], store_ids: list[str]) -> dict:
 
             in_stock = result.get("in_stock", False)
             msg = result.get("stock_message", result.get("error", "?"))
+            qty = result.get("quantity", 0)
             store_name = result.get("store_name", store_id)
-            status = f"IN STOCK ({msg})" if in_stock else msg
+            status = f"IN STOCK (Qty: {qty}, {msg})" if in_stock else msg
             log(f"  [{store_name}] {product['name']}: {status}")
 
             # Small delay between stores
@@ -269,8 +275,10 @@ def send_discord_alert(product_name: str, stores: list[dict], product_url: str) 
 
     store_lines = []
     for s in stores[:10]:
+        qty = s.get("quantity", 0)
+        qty_str = f" (Qty: {qty})" if qty else ""
         store_lines.append(
-            f"**{s['store_name']}** — {s.get('stock_message', 'In stock')}"
+            f"**{s['store_name']}** — {s.get('stock_message', 'In stock')}{qty_str}"
         )
 
     description = "\n".join(store_lines)
@@ -309,7 +317,9 @@ def send_pushover_alert(product_name: str, stores: list[dict], product_url: str)
 
     store_lines = []
     for s in stores[:3]:
-        store_lines.append(f"{s['store_name']}: {s.get('stock_message', 'In stock')}")
+        qty = s.get("quantity", 0)
+        qty_str = f" (Qty: {qty})" if qty else ""
+        store_lines.append(f"{s['store_name']}: {s.get('stock_message', 'In stock')}{qty_str}")
 
     message = f"{product_name}\n\n" + "\n".join(store_lines)
     if len(stores) > 3:
