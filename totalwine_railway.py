@@ -187,12 +187,31 @@ def check_stock(product: dict, store_id: str, session) -> dict:
         qty_match = re.search(r'"stock":(\d+)', text)
         quantity = int(qty_match.group(1)) if qty_match else 0
 
+        # Extract price
+        price_match = re.search(r'itemProp="price" content="([^"]+)"', text)
+        price = price_match.group(1) if price_match else ""
+
+        # Extract aisle/bay
+        aisle_match = re.search(r'(Aisle \d+[^"]*)', text)
+        bay_match = re.search(r'"bay":"([^"]+)"', text)
+        aisle = aisle_match.group(1) if aisle_match else ""
+        bay = bay_match.group(1) if bay_match else ""
+        location = ""
+        if aisle and bay:
+            location = f"{aisle} | {bay}"
+        elif aisle:
+            location = aisle
+        elif bay:
+            location = bay
+
         return {
             "store_id": store_id,
             "store_name": store_name,
             "in_stock": in_stock,
             "stock_message": pickup_status,
             "quantity": quantity,
+            "price": price,
+            "location": location,
             "all_methods": {method: msg for method, msg in stock_msgs},
         }
 
@@ -224,8 +243,15 @@ def check_all_stores(products: list[dict], store_ids: list[str]) -> dict:
             in_stock = result.get("in_stock", False)
             msg = result.get("stock_message", result.get("error", "?"))
             qty = result.get("quantity", 0)
+            price = result.get("price", "")
+            loc = result.get("location", "")
             store_name = result.get("store_name", store_id)
-            status = f"IN STOCK (Qty: {qty}, {msg})" if in_stock else msg
+            details = f"Qty: {qty}"
+            if price:
+                details += f", ${price}"
+            if loc:
+                details += f", {loc}"
+            status = f"IN STOCK ({details})" if in_stock else msg
             log(f"  [{store_name}] {product['name']}: {status}")
 
             # Small delay between stores
@@ -275,10 +301,19 @@ def send_discord_alert(product_name: str, stores: list[dict], product_url: str) 
 
     store_lines = []
     for s in stores[:10]:
+        details = []
         qty = s.get("quantity", 0)
-        qty_str = f" (Qty: {qty})" if qty else ""
+        price = s.get("price", "")
+        loc = s.get("location", "")
+        if qty:
+            details.append(f"Qty: {qty}")
+        if price:
+            details.append(f"${price}")
+        if loc:
+            details.append(loc)
+        detail_str = f" ({', '.join(details)})" if details else ""
         store_lines.append(
-            f"**{s['store_name']}** — {s.get('stock_message', 'In stock')}{qty_str}"
+            f"**{s['store_name']}** — {s.get('stock_message', 'In stock')}{detail_str}"
         )
 
     description = "\n".join(store_lines)
@@ -317,9 +352,18 @@ def send_pushover_alert(product_name: str, stores: list[dict], product_url: str)
 
     store_lines = []
     for s in stores[:3]:
+        details = []
         qty = s.get("quantity", 0)
-        qty_str = f" (Qty: {qty})" if qty else ""
-        store_lines.append(f"{s['store_name']}: {s.get('stock_message', 'In stock')}{qty_str}")
+        price = s.get("price", "")
+        loc = s.get("location", "")
+        if qty:
+            details.append(f"Qty: {qty}")
+        if price:
+            details.append(f"${price}")
+        if loc:
+            details.append(loc)
+        detail_str = f" ({', '.join(details)})" if details else ""
+        store_lines.append(f"{s['store_name']}: {s.get('stock_message', 'In stock')}{detail_str}")
 
     message = f"{product_name}\n\n" + "\n".join(store_lines)
     if len(stores) > 3:
