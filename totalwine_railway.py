@@ -183,6 +183,19 @@ def check_stock(product: dict, store_id: str, session) -> dict:
 
         in_stock = pickup_status.lower() not in ("out of stock", "unavailable", "unknown")
 
+        # Also check for "Limited quantities may be available in store"
+        # These are allocated/in-store-only bottles that show "Out of stock"
+        # for pickup but may actually be on the shelf
+        limited_in_store = bool(re.search(
+            r"Limited quantities may be available in store",
+            text,
+            re.IGNORECASE,
+        ))
+
+        if limited_in_store and not in_stock:
+            in_stock = True
+            pickup_status = "Limited qty - in store only"
+
         return {
             "store_id": store_id,
             "store_name": store_name,
