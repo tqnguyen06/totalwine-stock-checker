@@ -183,8 +183,11 @@ def check_stock(product: dict, store_id: str, session) -> dict:
 
         in_stock = pickup_status.lower() not in ("out of stock", "unavailable", "unknown")
 
-        # Extract quantity
-        qty_match = re.search(r'"stock":(\d+)', text)
+        # Extract quantity — use digitalStoreQuantity first (accurate for
+        # allocated/in-store-only bottles where "stock" reports 0)
+        qty_match = re.search(r'"digitalStoreQuantity":(\d+)', text)
+        if not qty_match or int(qty_match.group(1)) == 0:
+            qty_match = re.search(r'"stock":(\d+)', text)
         quantity = int(qty_match.group(1)) if qty_match else 0
 
         # Extract price
