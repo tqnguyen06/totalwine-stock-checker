@@ -190,6 +190,12 @@ def check_stock(product: dict, store_id: str, session) -> dict:
             qty_match = re.search(r'"stock":(\d+)', text)
         quantity = int(qty_match.group(1)) if qty_match else 0
 
+        # If status says "in stock" but quantity is 0, treat as out of stock.
+        # Total Wine's CDN sometimes serves the "limited quantities" message
+        # inconsistently for allocated bottles with no actual stock.
+        if in_stock and quantity == 0:
+            in_stock = False
+
         # Extract price
         price_match = re.search(r'itemProp="price" content="([^"]+)"', text)
         price = price_match.group(1) if price_match else ""
