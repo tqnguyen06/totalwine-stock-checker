@@ -402,8 +402,9 @@ def send_pushover_alert(product_name: str, stores: list[dict], product_url: str)
 # Main
 # ---------------------------------------------------------------------------
 
-def run_once(products: list[dict]) -> bool:
-    """Run a single check across all stores. Returns True if any product is in stock."""
+def run_once(products: list[dict], silent: bool = False) -> bool:
+    """Run a single check across all stores. Returns True if any product is in stock.
+    If silent=True, records state but skips sending alerts (used for baseline scan)."""
     stores_str = ", ".join(store_display(s) for s in TW_STORES)
     log(f"Checking {len(products)} product(s) at {len(TW_STORES)} store(s): {stores_str}")
 
@@ -428,9 +429,12 @@ def run_once(products: list[dict]) -> bool:
             any_in_stock = True
 
         if new_stores:
-            log(f"NEW STOCK: {name} at {len(new_stores)} new store(s)!")
-            send_pushover_alert(name, new_stores, product.get("url", ""))
-            send_discord_alert(name, new_stores, product.get("url", ""))
+            if silent:
+                log(f"BASELINE: {name} at {len(new_stores)} store(s) (no alert)")
+            else:
+                log(f"NEW STOCK: {name} at {len(new_stores)} new store(s)!")
+                send_pushover_alert(name, new_stores, product.get("url", ""))
+                send_discord_alert(name, new_stores, product.get("url", ""))
 
         if gone_stores:
             log(f"{name}: {len(gone_stores)} store(s) went out of stock")
@@ -463,6 +467,16 @@ def run_continuous(products: list[dict]) -> None:
     for p in products:
         log(f"  - {p['name']}")
 
+    # First run is silent — builds baseline state without alerting.
+    # This prevents re-alerting on every Railway deploy since /tmp
+    # gets wiped and state is lost.
+    log(f"--- Baseline scan (no alerts) ---")
+    try:
+        run_once(products, silent=True)
+    except Exception as e:
+        log(f"Error during baseline scan: {e}")
+
+    log(f"Baseline set. Starting alert-enabled monitoring.")
     check_count = 0
 
     while True:
