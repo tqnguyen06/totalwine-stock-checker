@@ -428,15 +428,34 @@ def run_once(products: list[dict], silent: bool = False) -> bool:
         errored_stores = [s for s in store_results if s.get("error")]
         current_store_ids = {s["store_id"] for s in in_stock_stores}
         known_stores = set(state.get("in_stock_stores", {}).get(name, []))
+        oos_counts = state.get("oos_counts", {}).get(name, {})
 
-        # Don't count errored stores as "gone out of stock" — they might
-        # still be in stock, we just couldn't check. Keep them in state.
+        # Don't count errored stores as "gone out of stock"
         errored_ids = {s["store_id"] for s in errored_stores}
-        # Preserve known stores that errored this check
         current_store_ids |= (known_stores & errored_ids)
 
+        # Require 3 consecutive out-of-stock checks before removing a store.
+        # Prevents CDN flip-flop from wiping state and re-alerting.
+        stores_to_remove = set()
+        for sid in known_stores - current_store_ids:
+            count = oos_counts.get(sid, 0) + 1
+            oos_counts[sid] = count
+            if count >= 3:
+                stores_to_remove.add(sid)
+                log(f"{name}: Store {store_display(sid)} confirmed out of stock ({count} consecutive)")
+            else:
+                # Keep in state until confirmed
+                current_store_ids.add(sid)
+                log(f"{name}: Store {store_display(sid)} OOS check {count}/3 — keeping in state")
+
+        # Clear OOS counters for stores that are in stock
+        for sid in current_store_ids:
+            oos_counts.pop(sid, None)
+
+        # Remove confirmed OOS stores
+        current_store_ids -= stores_to_remove
+
         new_stores = [s for s in in_stock_stores if s["store_id"] not in known_stores]
-        gone_stores = known_stores - current_store_ids
 
         if in_stock_stores:
             any_in_stock = True
@@ -449,16 +468,17 @@ def run_once(products: list[dict], silent: bool = False) -> bool:
                 send_pushover_alert(name, new_stores, product.get("url", ""))
                 send_discord_alert(name, new_stores, product.get("url", ""))
 
-        if gone_stores:
-            log(f"{name}: {len(gone_stores)} store(s) went out of stock")
+        if stores_to_remove:
+            log(f"{name}: {len(stores_to_remove)} store(s) confirmed out of stock")
 
         if in_stock_stores:
             log(f"{name}: In stock at {len(in_stock_stores)} store(s) ({len(new_stores)} new)")
         else:
             log(f"{name}: Out of stock everywhere")
 
-        if current_store_ids != known_stores:
+        if current_store_ids != known_stores or oos_counts:
             state.setdefault("in_stock_stores", {})[name] = list(current_store_ids)
+            state.setdefault("oos_counts", {})[name] = oos_counts
             state_changed = True
 
     if state_changed:
