@@ -473,16 +473,6 @@ def run_continuous(products: list[dict]) -> None:
     for p in products:
         log(f"  - {p['name']}")
 
-    # First run is silent — builds baseline state without alerting.
-    # This prevents re-alerting on every Railway deploy since /tmp
-    # gets wiped and state is lost.
-    log(f"--- Baseline scan (no alerts) ---")
-    try:
-        run_once(products, silent=True)
-    except Exception as e:
-        log(f"Error during baseline scan: {e}")
-
-    log(f"Baseline set. Starting alert-enabled monitoring.")
     check_count = 0
 
     while True:
