@@ -425,8 +425,15 @@ def run_once(products: list[dict], silent: bool = False) -> bool:
         store_results = results.get(name, [])
 
         in_stock_stores = [s for s in store_results if s.get("in_stock")]
+        errored_stores = [s for s in store_results if s.get("error")]
         current_store_ids = {s["store_id"] for s in in_stock_stores}
         known_stores = set(state.get("in_stock_stores", {}).get(name, []))
+
+        # Don't count errored stores as "gone out of stock" — they might
+        # still be in stock, we just couldn't check. Keep them in state.
+        errored_ids = {s["store_id"] for s in errored_stores}
+        # Preserve known stores that errored this check
+        current_store_ids |= (known_stores & errored_ids)
 
         new_stores = [s for s in in_stock_stores if s["store_id"] not in known_stores]
         gone_stores = known_stores - current_store_ids
