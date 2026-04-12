@@ -36,7 +36,9 @@ import os
 import re
 import sys
 import time
+import threading
 from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 
 from curl_cffi import requests as curl_requests
@@ -44,6 +46,9 @@ from zoneinfo import ZoneInfo
 
 # Regular requests for Pushover/Discord (doesn't need TLS fingerprinting)
 import requests
+
+# Shared stock cache for the API server
+_stock_cache: dict = {"stock": [], "last_updated": None}
 
 # Configuration
 TW_STORES = [s.strip() for s in os.getenv("TW_STORES", "907,945").split(",") if s.strip()]
@@ -416,6 +421,9 @@ def run_once(products: list[dict], silent: bool = False) -> bool:
 
     results = check_all_stores(products, TW_STORES)
 
+    # Update stock cache for API server
+    update_stock_cache(products, results)
+
     state = load_state()
     any_in_stock = False
     state_changed = False
@@ -500,6 +508,10 @@ def run_continuous(products: list[dict]) -> None:
     for p in products:
         log(f"  - {p['name']}")
 
+    # Start API server in background thread
+    api_thread = threading.Thread(target=start_api_server, daemon=True)
+    api_thread.start()
+
     check_count = 0
 
     while True:
@@ -572,6 +584,97 @@ Environment Variables:
     PROXY                    Residential proxy (host:port:user:pass)
     TIMEZONE                 Timezone (default: America/New_York)
 """)
+
+
+# ---------------------------------------------------------------------------
+# HTTP API server (runs in background thread)
+# ---------------------------------------------------------------------------
+
+API_PORT = int(os.getenv("PORT", "8080"))
+API_TOKEN = os.getenv("STOCK_API_TOKEN", "")
+
+class StockAPIHandler(BaseHTTPRequestHandler):
+    """Serves cached stock data as JSON."""
+
+    def do_GET(self):
+        # Optional token auth
+        if API_TOKEN:
+            auth = self.headers.get("Authorization", "")
+            if auth != f"Bearer {API_TOKEN}":
+                self.send_response(401)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":"Unauthorized"}')
+                return
+
+        if self.path == "/api/stock":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(_stock_cache).encode())
+        elif self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress HTTP logs
+
+
+def start_api_server():
+    """Start HTTP server in background thread."""
+    server = HTTPServer(("0.0.0.0", API_PORT), StockAPIHandler)
+    log(f"Stock API server listening on port {API_PORT}")
+    server.serve_forever()
+
+
+def update_stock_cache(products: list[dict], results: dict):
+    """Update the shared stock cache with latest check results."""
+    stock_list = []
+    for product in products:
+        name = product["name"]
+        store_results = results.get(name, [])
+        stores = []
+        for s in store_results:
+            if s.get("error"):
+                stores.append({
+                    "storeId": s.get("store_id", ""),
+                    "storeName": s.get("store_name", ""),
+                    "inStock": False,
+                    "stockMessage": s.get("error", "Error"),
+                    "quantity": 0,
+                    "price": "",
+                    "location": "",
+                })
+            else:
+                stores.append({
+                    "storeId": s.get("store_id", ""),
+                    "storeName": s.get("store_name", ""),
+                    "inStock": s.get("in_stock", False),
+                    "stockMessage": s.get("stock_message", "Unknown"),
+                    "quantity": s.get("quantity", 0),
+                    "price": s.get("price", ""),
+                    "location": s.get("location", ""),
+                })
+        stock_list.append({
+            "name": name,
+            "productId": product["productId"],
+            "stores": stores,
+        })
+
+    _stock_cache["stock"] = stock_list
+    _stock_cache["last_updated"] = datetime.now(ZoneInfo(TIMEZONE)).isoformat()
 
 
 def main() -> None:
