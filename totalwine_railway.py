@@ -200,6 +200,7 @@ def check_stock(product: dict, store_id: str, session) -> dict:
             return {"store_id": store_id, "store_name": store_name, "error": f"http_{resp.status_code}"}
 
         text = resp.text
+        cache_age = int(resp.headers.get("age", "0"))
 
         # Extract stock messages for each shopping method
         stock_msgs = re.findall(
@@ -254,6 +255,7 @@ def check_stock(product: dict, store_id: str, session) -> dict:
             "quantity": quantity,
             "price": price,
             "location": location,
+            "cache_age": cache_age,
             "all_methods": {method: msg for method, msg in stock_msgs},
         }
 
@@ -288,13 +290,21 @@ def check_all_stores(products: list[dict], store_ids: list[str]) -> dict:
             qty = result.get("quantity", 0)
             price = result.get("price", "")
             loc = result.get("location", "")
+            cache_age = result.get("cache_age", 0)
             store_name = result.get("store_name", store_id)
             details = f"Qty: {qty}"
             if price:
                 details += f", ${price}"
             if loc:
                 details += f", {loc}"
-            status = f"IN STOCK ({details})" if in_stock else msg
+            # Show cache freshness
+            if cache_age > 3600:
+                freshness = f" [STALE {cache_age//3600}hr]"
+            elif cache_age > 60:
+                freshness = f" [{cache_age//60}min cache]"
+            else:
+                freshness = " [fresh]"
+            status = (f"IN STOCK ({details})" if in_stock else msg) + freshness
             log(f"  [{store_name}] {product['name']}: {status}")
 
             # Small delay between stores
