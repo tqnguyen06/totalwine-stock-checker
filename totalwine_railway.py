@@ -202,12 +202,6 @@ def check_stock(product: dict, store_id: str, session) -> dict:
         text = resp.text
         cache_age = int(resp.headers.get("age", "0"))
 
-        # Reject stale cached responses (over 1 hour old)
-        # Stale CDN pages cause false alerts with outdated stock data
-        if cache_age > 3600:
-            log(f"  Stale cache ({cache_age // 3600}hr) for {store_display(store_id)} — skipping")
-            return {"store_id": store_id, "store_name": store_name, "error": "stale_cache", "cache_age": cache_age}
-
         # Extract stock messages for each shopping method
         stock_msgs = re.findall(
             r'"shoppingMethod":"([^"]+)","stockMessage":"([^"]+)"',
@@ -235,6 +229,13 @@ def check_stock(product: dict, store_id: str, session) -> dict:
         # inconsistently for allocated bottles with no actual stock.
         if in_stock and quantity == 0:
             in_stock = False
+
+        # Reject stale "in stock" responses (over 1 hour old).
+        # Stale CDN pages can show old inventory that's already sold.
+        # Stale "out of stock" is fine — safer to assume still OOS.
+        if in_stock and cache_age > 3600:
+            log(f"  Stale cache ({cache_age // 3600}hr) showing in-stock for {store_display(store_id)} — skipping")
+            return {"store_id": store_id, "store_name": store_name, "error": "stale_cache", "cache_age": cache_age}
 
         # Extract price
         price_match = re.search(r'itemProp="price" content="([^"]+)"', text)
