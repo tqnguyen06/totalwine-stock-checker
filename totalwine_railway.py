@@ -59,18 +59,46 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID", "")
 TIMEZONE = os.getenv("TIMEZONE", "America/New_York")
 
-# Proxy support - format: host:port:user:pass
-_proxy_raw = os.getenv("PROXY", "")
-PROXY_URL = None
-if _proxy_raw:
-    parts = _proxy_raw.split(":")
+# Proxy support - PROXY_LIST for multiple proxies (newline-separated), PROXY for single
+# Format per proxy: host:port:user:pass
+PROXY_URLS: list[str] = []
+_proxy_list_raw = os.getenv("PROXY_LIST", "")
+_proxy_single_raw = os.getenv("PROXY", "")
+
+def _parse_proxy(raw: str) -> str | None:
+    raw = raw.strip()
+    if not raw:
+        return None
+    parts = raw.split(":")
     if len(parts) == 4:
         host, port, user, password = parts
-        PROXY_URL = f"http://{user}:{password}@{host}:{port}"
-    elif _proxy_raw.startswith("http"):
-        PROXY_URL = _proxy_raw
-    else:
-        print(f"WARNING: Invalid PROXY format. Expected host:port:user:pass")
+        return f"http://{user}:{password}@{host}:{port}"
+    elif raw.startswith("http"):
+        return raw
+    return None
+
+if _proxy_list_raw:
+    for line in _proxy_list_raw.replace("\\n", "\n").split("\n"):
+        url = _parse_proxy(line)
+        if url:
+            PROXY_URLS.append(url)
+elif _proxy_single_raw:
+    url = _parse_proxy(_proxy_single_raw)
+    if url:
+        PROXY_URLS.append(url)
+
+# For backward compat
+PROXY_URL = PROXY_URLS[0] if PROXY_URLS else None
+_proxy_index = 0
+
+def get_next_proxy() -> str | None:
+    """Rotate through proxy list."""
+    global _proxy_index
+    if not PROXY_URLS:
+        return None
+    proxy = PROXY_URLS[_proxy_index % len(PROXY_URLS)]
+    _proxy_index += 1
+    return proxy
 
 BASE_URL = "https://www.totalwine.com"
 STATE_FILE = os.getenv("STATE_FILE", "/tmp/totalwine_stock_state.json")
@@ -240,9 +268,10 @@ def check_all_stores(products: list[dict], store_ids: list[str]) -> dict:
 
     Returns dict: product_name -> list of store results
     """
+    proxy = get_next_proxy()
     proxy_kwargs = {}
-    if PROXY_URL:
-        proxy_kwargs["proxies"] = {"http": PROXY_URL, "https": PROXY_URL}
+    if proxy:
+        proxy_kwargs["proxies"] = {"http": proxy, "https": proxy}
     session = curl_requests.Session(impersonate="chrome", **proxy_kwargs)
 
     results = {}
@@ -503,7 +532,7 @@ def run_continuous(products: list[dict]) -> None:
     log(f"Check interval: {TW_CHECK_INTERVAL}s ({TW_CHECK_INTERVAL // 60}min)")
     log(f"Pushover: {'Yes' if PUSHOVER_APP_TOKEN else 'No'}")
     log(f"Discord: {'Yes' if DISCORD_WEBHOOK_URL else 'No'}")
-    log(f"Proxy: {'Yes' if PROXY_URL else 'No'}")
+    log(f"Proxies: {len(PROXY_URLS)} configured")
 
     for p in products:
         log(f"  - {p['name']}")
