@@ -202,6 +202,12 @@ def check_stock(product: dict, store_id: str, session) -> dict:
         text = resp.text
         cache_age = int(resp.headers.get("age", "0"))
 
+        # Reject stale cached responses (over 1 hour old)
+        # Stale CDN pages cause false alerts with outdated stock data
+        if cache_age > 3600:
+            log(f"  Stale cache ({cache_age // 3600}hr) for {store_display(store_id)} — skipping")
+            return {"store_id": store_id, "store_name": store_name, "error": "stale_cache", "cache_age": cache_age}
+
         # Extract stock messages for each shopping method
         stock_msgs = re.findall(
             r'"shoppingMethod":"([^"]+)","stockMessage":"([^"]+)"',
